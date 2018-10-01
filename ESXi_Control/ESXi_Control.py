@@ -1,3 +1,12 @@
+#
+#  Provides a way to control various functions of an ESXi host through SSH.
+#  If you have a paid license this probably isn't terribly useful as you could
+#  use something like pyvmomi instead.
+#
+#  Ensure that SSH is enabled on your host.  Remember, unless you have
+#  configured it otherwise, SSH is disabled when a host reboots.
+#
+
 import paramiko
 
 class ESXiError(Exception):
@@ -10,7 +19,8 @@ class ESXiError(Exception):
 class ESXiHost(object):
 
     """
-        Defines interfaces for connecting to, querying from and controlling and ESXi host.
+        Defines interfaces for connecting to, querying from and 
+        controlling an ESXi host.
     """
 
     def __init__(self, host_name, username, password):
