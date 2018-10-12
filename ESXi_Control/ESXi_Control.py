@@ -7,13 +7,142 @@
 #  configured it otherwise, SSH is disabled when a host reboots.
 #
 
+import re
 import paramiko
+from enum import Enum, EnumMeta
+
+
+class ESXIErrors(object):
+
+    """
+        Defines constants for api errors.
+    """
+
+    class SSHNotConnected(Enum):
+        code = -1000
+        message = "SSH not connected to host."
+
+    class Host_MaintenanceModeEnter_Failed(Enum):
+        code = -1010
+        message = "Unable to enable maintenance mode on host."
+
+    class Host_MaintenanceModeExit_Failed(Enum):
+        code = -1011
+        message = "Unable to disable maintenance mode on host."
+
+    class Host_MaintenanceModeQuery_Failed(Enum):
+        code = -1012
+        message = "Unable to get maintenance mode state."
+
+    class Host_Shutdown_InvalidCommand(Enum):
+        code = -1020
+        message = "Command must be of type string and must be either 'poweroff' or 'reboot'."
+
+    class Host_Shutdown_Failed(Enum):
+        code = -1021
+        message = "Unable to shutdown host."
+
+    class Host_VMQuery_Failed(Enum):
+        code = -1030
+        message = "Unable to get list of vms from host."
+
+    class VM_PowerStateQuery_Failed(Enum):
+        code = -1040
+        message = "Unable to query the power state of the specified vm."
+
+    class VM_Hibernate_Failed(Enum):
+        code = -1050
+        message = "Unable to hibernate the specified vm."
+
+    class VM_PowerOn_Failed(Enum):
+        code = -1060
+        message = "Unable to power on the specified vm."
+
+    class VM_PowerOff_Failed(Enum):
+        code = -1070
+        message = "Unable to power off the specified vm."
+
+    class VM_Reboot_Failed(Enum):
+        code = -1080
+        message = "Unable to reboot the specified vm."
+
+    class VM_Reset_Failed(Enum):
+        code = -1090
+        message = "Unable to reset the specified vm."
+
+    class VM_Shutdown_Failed(Enum):
+        code = -1100
+        message = "Unable to shutdown the specified vm."
+
+    class VM_Suspend_Failed(Enum):
+        code = -1110
+        message = "Unable to suspend the specified vm."
+
 
 class ESXiError(Exception):
 
-    def __init__(self, code, message):
-        self.code = code
-        self.message = message
+    """
+        ESXi exception class that handles taking error constants or classic
+        code/message errors.
+    """
+
+    def __init__(self, *args, **kwargs):
+
+        # See if an error enum was passed in.
+        if len(args) > 0 and isinstance(args[0], EnumMeta):
+
+            # Save the code and message into the exception.
+            self.code = args[0]['code'].value
+            self.message = args[0]['message'].value
+
+            # See if there are more unnamed args.  If so, use the next
+            # one for the reason.
+            if len(args) > 1 and args[1] is not None:
+
+                self.reason = args[1]
+
+            # See if reason was specified in the named args.
+            elif "reason" in kwargs:
+
+                self.reason = kwargs['reason']
+
+            else:
+
+                self.reason = None
+
+        # Error enum not passed in, use the params as the exception values.
+        else:
+
+            # Get the code passed in.
+            if len(args) > 0:
+
+                self.code = args[0]
+
+            elif "code" in kwargs:
+
+                self.code = kwargs['code']
+
+            # Get the message passed in.
+            if len(args) > 1:
+
+                self.message = args[1]
+
+            elif "message" in kwargs:
+
+                self.message = kwargs['message']
+
+            # Get the reason passed in.
+            if len(args) > 2:
+
+                self.reason = args[2]
+
+            elif "reason" in kwargs:
+
+                self.reason = kwargs['reason']
+
+            else:
+
+                self.reason = None
 
 
 class ESXiHost(object):
@@ -107,11 +236,11 @@ class ESXiHost(object):
 
             else:
 
-                raise ESXiError(1000, "Unable to get maintenance mode state.")
+                raise ESXiError(ESXIErrors.Host_MaintenanceModeQuery_Failed)
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def enter_maintenance_mode(self):
 
@@ -135,11 +264,12 @@ class ESXiHost(object):
 
             # Check the exit code of the command.  0 = success, 1 = failure
             if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to enable maintenance mode on host.")
+
+                raise ESXiError(ESXIErrors.Host_MaintenanceModeEnter_Failed)
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def exit_maintenance_mode(self):
 
@@ -163,11 +293,11 @@ class ESXiHost(object):
 
             # Check the exit code of the command.  0 = success, 1 = failure
             if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to disable maintenance mode on host.")
+                raise ESXiError(ESXIErrors.Host_MaintenanceModeExit_Failed)
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def shutdown(self, command):
 
@@ -184,14 +314,16 @@ class ESXiHost(object):
 
             # Validate the specified command.
             if not isinstance(command, str) or command.lower() not in ['poweroff', 'reboot']:
-                raise ESXiError(1000, "Command must be of type string and must be either 'poweroff' or 'reboot'.")
+
+                raise ESXiError(ESXIErrors.Host_Shutdown_InvalidCommand)
 
             # Get the existing maintenance mode state on the host.
-            maintenance_mode_state = self.get_maintenance_mode()
+            # maintenance_mode_state = self.get_maintenance_mode()
 
             # If maintenance mode is disabled, raise an error.
-            if maintenance_mode_state == "Disabled":
-                raise ESXiError(1000, "ESXi host not in maintenance mode.")
+            # if maintenance_mode_state == "Disabled":
+
+            #    raise ESXiError(1000, "ESXi host not in maintenance mode.")
 
             # Execute the command to shutdown the host.
             stdin, stdout, stderr = self.ssh_session.exec_command(
@@ -200,11 +332,12 @@ class ESXiHost(object):
 
             # Check the exit code of the command.  0 = success, 1 = failure
             if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to disable maintenance mode on host.")
+
+                raise ESXiError(ESXIErrors.Host_Shutdown_Failed)
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def get_all_vms(self):
 
@@ -227,7 +360,7 @@ class ESXiHost(object):
 
             # Check the exit code of the command.  0 = success, 1 = failure
             if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to get list of vms from host.")
+                raise ESXiError(ESXIErrors.Host_VMQuery_Failed)
 
             vm_list = stdout.readlines()
 
@@ -252,7 +385,7 @@ class ESXiHost(object):
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def get_running_vms(self):
 
@@ -282,7 +415,7 @@ class ESXiHost(object):
                 for vm in all_vms:
 
                     # If the vm is running, save it in the list.
-                    if vm.get_powerstate == 'on':
+                    if vm.power_getstate() == 'on':
                         vms.append(
                             vm
                         )
@@ -295,7 +428,7 @@ class ESXiHost(object):
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def find_vm_by_name(self, vm_name):
 
@@ -326,7 +459,7 @@ class ESXiHost(object):
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
     def find_vm_by_id(self, vm_id):
 
@@ -357,7 +490,7 @@ class ESXiHost(object):
 
         else:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+            raise ESXiError(ESXIErrors.SSHNotConnected)
 
 
 class ESXiVm:
@@ -370,114 +503,378 @@ class ESXiVm:
         self.file = vm_data[3]
         self.guest_os = vm_data[4]
         self.version = vm_data[5]
-        #self.comments = vm_data[6]
 
         self.host = host
         self.ssh_session = host.ssh_session
 
-    @property
-    def get_powerstate(self):
+    def ssh_check(*args, **kwargs):
+        """
+          Used to create a decorator that performs a check to see if SSH is
+          still connected to a host.
+
+          returns:
+            ssh_check_wrapper: (function) The wrapper function that
+            performs the SSH check.
+        """
+
+        # Get the function we are trying to wrap.
+        wrapped_function = args[0]
+
+        def ssh_check_wrapper(*args_list, **kwargs_list):
+            """
+              Performs a check to see if SSH is still connected to a host.
+
+              returns:
+                The return value of the wrapped function.
+            """
+
+            # Check if SSH is still connected.
+            if not args[0].host.connected():
+
+                raise ESXiError(ESXIErrors.SSHNotConnected)
+
+            # Call the wrapped function.
+            return wrapped_function(*args_list, **kwargs_list)
+
+        return ssh_check_wrapper
+
+    @ssh_check
+    def power_getstate(self):
 
         """
           Gets the power state of the vm.
 
           returns:
-            powerstate: (string) The power state of the vm. 'off' or 'on'
+            powerstate: (string) The power state of the vm. 'off' or 'on' or 'suspended'
         """
 
-        if self.host.connected():
+        # Execute the command to get the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.getstate {0}".format(self.id)
+        )
 
-            # Execute the command to get the power state.
-            stdin, stdout, stderr = self.ssh_session.exec_command(
-                "vim-cmd vmsvc/power.getstate {0}".format(self.id)
-            )
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
 
-            # Check the exit code of the command.  0 = success, 1 = failure
-            if not stdout.channel.recv_exit_status() == 0:
+            raise ESXiError(ESXIErrors.VM_PowerStateQuery_Failed)
 
-                raise ESXiError(1000, "Unable to query the power state of the specified vm.")
+        result = stdout.readlines()
 
-            result = stdout.readlines()
+        # Got through the lines, the state will be prefaced by the word 'Powered'.
+        for line in result:
 
-            # Got through the lines, the state will be prefaced by the word 'Powered'.
-            for line in result:
+            if "Powered " in line:
 
-                if "Powered " in line:
+                state = line.split(" ")[1]
 
-                    state = line.split(" ")[1]
+                return state.strip()
 
-                    return state.strip()
+            elif "Suspended" in line:
 
-            return None
+                return "suspended"
 
-        else:
+        return None
 
-            raise ESXiError(1000, "SSH not connected to host.")
-
-    def set_powerstate(self, state):
-
-        """
-          Sets the power state of the vm.
-
-          params:
-            powerstate: (string) The power state of the vm. 'off' or 'on'
-        """
-
-        if self.host.connected():
-
-            # Validate the specified state.
-            if not isinstance(state, str) or state.lower() not in ['on', 'off']:
-
-                raise ESXiError(1000, "Command must be of type string and must be either 'on' or 'off'.")
-
-            # Verify that the vm isn't already in the specified state.
-            if self.get_powerstate == state:
-
-                return
-
-            # Execute the command to set the power state.
-            stdin, stdout, stderr = self.ssh_session.exec_command(
-                "vim-cmd vmsvc/power.{0} {1}".format(state, self.id)
-            )
-
-            # Check the exit code of the command.  0 = success, 1 = failure
-            if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to set the power state of the specified vm.")
-
-            # Just read the lines for completeness.
-            stdout.readlines()
-
-        else:
-
-            raise ESXiError(1000, "SSH not connected to host.")
-
-    def shutdown(self):
+    @ssh_check
+    def power_hibernate(self):
 
         """
-          Shuts down the vm.
+          Hibernates the VM.
+        """
 
-          params:
-            vm: (ESXiVm) The ESXiVm object that contains the vm details.
-         """
+        # Verify that the vm isn't already in the specified state.
+        if self.power_getstate() == 'suspended':
 
-        if self.host.connected():
+            return
 
-            # Verify that the vm isn't already shutdown.
-            if self.get_powerstate == 'off':
-                return
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.hibernate {0}".format(self.id)
+        )
 
-            # Execute the command to set the power state.
-            stdin, stdout, stderr = self.ssh_session.exec_command(
-                "vim-cmd vmsvc/power.shutdown {0}".format(self.id)
-            )
+        # Read lines just for completeness.
+        stdout.readlines()
 
-            # Check the exit code of the command.  0 = success, 1 = failure
-            if not stdout.channel.recv_exit_status() == 0:
-                raise ESXiError(1000, "Unable to shutdown the specified vm.")
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
 
-            # Just read the lines for completeness.
-            stdout.readlines()
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
 
-        else:
+            if "vim.fault" in vim_status[0]:
 
-            raise ESXiError(1000, "SSH not connected to host.")
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    1000,
+                    "Unable to hibernate the specified vm.",
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(vim_fault, self.power_getstate().capitalize())
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_Hibernate_Failed)
+
+    @ssh_check
+    def power_on(self):
+
+        """
+          Powers on the VM.
+        """
+
+        # Verify that the vm isn't already in the specified state.
+        if self.power_getstate() == 'on':
+
+            return
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.on {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_PowerOn_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(
+                        vim_fault,
+                        self.power_getstate().capitalize()
+                    )
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_PowerOn_Failed)
+
+    @ssh_check
+    def power_off(self):
+
+        """
+          Powers off the VM.
+        """
+
+        # Verify that the vm isn't already in the specified state.
+        if self.power_getstate() == 'off':
+
+            return
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.off {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_PowerOff_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(
+                        vim_fault,
+                        self.power_getstate().capitalize()
+                    )
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_PowerOff_Failed)
+
+    @ssh_check
+    def power_reboot(self):
+
+        """
+          Reboots the VM.
+        """
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.reboot {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_Reboot_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(
+                        vim_fault,
+                        self.power_getstate().capitalize()
+                    )
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_Reboot_Failed)
+
+    @ssh_check
+    def power_reset(self):
+
+        """
+          Resets the VM.
+        """
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.reset {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_Reset_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(
+                        vim_fault,
+                        self.power_getstate().capitalize()
+                    )
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_Reset_Failed)
+
+    @ssh_check
+    def power_shutdown(self):
+
+        """
+          Shuts down the VM.
+        """
+
+        # Verify that the vm isn't already in the specified state.
+        if self.power_getstate() == 'off':
+
+            return
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.shutdown {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_Shutdown_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(
+                        vim_fault,
+                        self.power_getstate().capitalize()
+                    )
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_Shutdown_Failed)
+
+    @ssh_check
+    def power_suspend(self):
+
+        """
+          Suspends the VM.
+        """
+
+        # Verify that the vm isn't already in the specified state.
+        if self.power_getstate() == 'suspended':
+
+            return
+
+        # Execute the command to set the power state.
+        stdin, stdout, stderr = self.ssh_session.exec_command(
+            "vim-cmd vmsvc/power.suspend {0}".format(self.id)
+        )
+
+        # Read lines just for completeness.
+        stdout.readlines()
+
+        # Check the exit code of the command.  0 = success, 1 = failure
+        if not stdout.channel.recv_exit_status() == 0:
+
+            # Do a quick check to see if the vim.fault was returned in stderr.
+            vim_status = stderr.readlines()
+
+            if "vim.fault" in vim_status[0]:
+
+                # Get the actual vim fault.
+                vim_fault = re.search("(?:vim\.fault)[.]([a-zA-Z]*)", vim_status[0])
+                vim_fault = vim_fault.group(1)
+
+                raise ESXiError(
+                    ESXIErrors.VM_Suspend_Failed,
+                    "({0}) The attempted operation cannot be performed "
+                    "in the current state. ({1})".format(vim_fault, self.power_getstate().capitalize())
+                )
+
+            else:
+
+                raise ESXiError(ESXIErrors.VM_Suspend_Failed)
+
+    @ssh_check
+    def power_suspendresume(self):
+        pass
